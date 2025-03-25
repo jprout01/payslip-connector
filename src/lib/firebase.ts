@@ -1,9 +1,8 @@
-
 import { initializeApp } from "firebase/app";
 import { getAnalytics } from "firebase/analytics";
 import { getFirestore, collection, addDoc, getDocs, doc, deleteDoc, updateDoc, query, where, orderBy, Timestamp } from "firebase/firestore";
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, User } from "firebase/auth";
-import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { getStorage, ref, uploadBytes, getDownloadURL, listAll, deleteObject } from "firebase/storage";
 
 const firebaseConfig = {
   apiKey: "AIzaSyCT4xO0gKej6GHLUvwuTTTa_3yzDVG-DCo",
@@ -37,6 +36,16 @@ export interface Payslip {
   createdAt?: Date;
   updatedAt?: Date;
   userId?: string;
+}
+
+export interface PayslipFile {
+  id?: string;
+  name: string;
+  url: string;
+  contentType: string;
+  size: number;
+  createdAt: Date;
+  userId: string;
 }
 
 // Authentication functions
@@ -135,6 +144,91 @@ export const deletePayslip = async (id: string) => {
     return id;
   } catch (error) {
     console.error("Error deleting payslip: ", error);
+    throw error;
+  }
+};
+
+// Payslip file upload functions
+export const uploadPayslipFile = async (file: File): Promise<PayslipFile> => {
+  try {
+    if (!auth.currentUser) throw new Error("User not authenticated");
+    
+    const userId = auth.currentUser.uid;
+    const timestamp = new Date().getTime();
+    const fileName = `${timestamp}_${file.name}`;
+    const storageRef = ref(storage, `payslips/${userId}/${fileName}`);
+    
+    // Upload file
+    await uploadBytes(storageRef, file);
+    
+    // Get download URL
+    const url = await getDownloadURL(storageRef);
+    
+    // Save file metadata to Firestore
+    const fileData: Omit<PayslipFile, 'id'> = {
+      name: file.name,
+      url,
+      contentType: file.type,
+      size: file.size,
+      createdAt: new Date(),
+      userId
+    };
+    
+    const docRef = await addDoc(collection(db, "payslipFiles"), fileData);
+    
+    return {
+      id: docRef.id,
+      ...fileData
+    };
+  } catch (error) {
+    console.error("Error uploading payslip file: ", error);
+    throw error;
+  }
+};
+
+export const getPayslipFiles = async (): Promise<PayslipFile[]> => {
+  try {
+    if (!auth.currentUser) throw new Error("User not authenticated");
+    
+    const q = query(
+      collection(db, "payslipFiles"),
+      where("userId", "==", auth.currentUser.uid),
+      orderBy("createdAt", "desc")
+    );
+    
+    const querySnapshot = await getDocs(q);
+    const files: PayslipFile[] = [];
+    
+    querySnapshot.forEach((doc) => {
+      const data = doc.data();
+      files.push({
+        id: doc.id,
+        ...data,
+        createdAt: data.createdAt.toDate()
+      } as PayslipFile);
+    });
+    
+    return files;
+  } catch (error) {
+    console.error("Error getting payslip files: ", error);
+    throw error;
+  }
+};
+
+export const deletePayslipFile = async (fileId: string, fileUrl: string): Promise<string> => {
+  try {
+    if (!auth.currentUser) throw new Error("User not authenticated");
+    
+    // Delete file from Storage
+    const storageRef = ref(storage, fileUrl);
+    await deleteObject(storageRef);
+    
+    // Delete metadata from Firestore
+    await deleteDoc(doc(db, "payslipFiles", fileId));
+    
+    return fileId;
+  } catch (error) {
+    console.error("Error deleting payslip file: ", error);
     throw error;
   }
 };
